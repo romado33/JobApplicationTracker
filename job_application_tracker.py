@@ -5,6 +5,7 @@ import csv
 import imaplib
 import email
 import logging
+import sys
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from email.header import decode_header
@@ -17,6 +18,10 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
+
+if not EMAIL_USER or not EMAIL_PASS:
+    logger.error("Missing EMAIL_USER or EMAIL_PASS environment variables")
+    sys.exit(1)
 
 # ─── Patterns ──────────────────────────────────────────────────────────────
 THANK_YOU_PATTERNS = [
