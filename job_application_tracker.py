@@ -173,17 +173,17 @@ def process_job_emails():
             for i in range(0, len(email_ids), BATCH_SIZE):
                 batch_ids = email_ids[i:i+BATCH_SIZE]
                 id_str = ','.join(eid.decode() for eid in batch_ids)
-                result, msg_data = mail.fetch(id_str, "(BODY.PEEK[HEADER])")
+                result, msg_data = mail.fetch(id_str, "(RFC822)")
                 if result != "OK":
                     continue
 
                 for j in range(0, len(msg_data), 2):
                     if len(msg_data[j]) < 2:
                         continue
-                    msg = email.message_from_bytes(msg_data[j][1])
-                    subject = decode_str(msg.get("Subject", ""))
-                    sender = decode_str(msg.get("From", ""))
-                    date_str = msg.get("Date")
+                    full_msg = email.message_from_bytes(msg_data[j][1])
+                    subject = decode_str(full_msg.get("Subject", ""))
+                    sender = decode_str(full_msg.get("From", ""))
+                    date_str = full_msg.get("Date")
                     date_obj = email.utils.parsedate_to_datetime(date_str)
                     if date_obj.tzinfo is None:
                         date_obj = date_obj.replace(tzinfo=timezone.utc)
@@ -191,11 +191,6 @@ def process_job_emails():
                         stop_processing = True
                         break
 
-                    eid = batch_ids[j//2]
-                    result, full_msg_data = mail.fetch(eid, "(RFC822)")
-                    if result != "OK":
-                        continue
-                    full_msg = email.message_from_bytes(full_msg_data[0][1])
                     body = extract_text_from_email(full_msg)
 
                     status = classify_email(subject, body)
