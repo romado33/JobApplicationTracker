@@ -113,71 +113,71 @@ def process_job_emails():
     applications = {}
     three_months_ago = datetime.now(timezone.utc) - timedelta(days=90)
     try:
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(EMAIL_USER, EMAIL_PASS)
-        mail.select('"[Gmail]/All Mail"')
+        with imaplib.IMAP4_SSL("imap.gmail.com") as mail:
+            mail.login(EMAIL_USER, EMAIL_PASS)
+            mail.select('"[Gmail]/All Mail"')
 
-        logger.info("📬 Scanning Gmail inbox...")
-        result, data = mail.search(None, 'X-GM-RAW', 'newer_than:90d')
+            logger.info("📬 Scanning Gmail inbox...")
+            result, data = mail.search(None, 'X-GM-RAW', 'newer_than:90d')
 
-        if result != "OK":
-            logger.error("IMAP search failed")
-            return {}
-
-        email_ids = data[0].split()
-        logger.info(f"📧 Found {len(email_ids)} recent emails to check")
-        if not email_ids:
-            return {}
-
-        BATCH_SIZE = 50
-        for i in range(0, len(email_ids), BATCH_SIZE):
-            batch_ids = email_ids[i:i+BATCH_SIZE]
-            id_str = ','.join(eid.decode() for eid in batch_ids)
-            result, msg_data = mail.fetch(id_str, "(BODY.PEEK[HEADER])")
             if result != "OK":
-                continue
+                logger.error("IMAP search failed")
+                return {}
 
-            for j in range(0, len(msg_data), 2):
-                if len(msg_data[j]) < 2:
-                    continue
-                msg = email.message_from_bytes(msg_data[j][1])
-                subject = decode_str(msg.get("Subject", ""))
-                sender = decode_str(msg.get("From", ""))
-                date_str = msg.get("Date")
-                date_obj = email.utils.parsedate_to_datetime(date_str)
-                if date_obj.tzinfo is None:
-                    date_obj = date_obj.replace(tzinfo=timezone.utc)
-                if date_obj < three_months_ago:
-                    return applications
+            email_ids = data[0].split()
+            logger.info(f"📧 Found {len(email_ids)} recent emails to check")
+            if not email_ids:
+                return {}
 
-                eid = batch_ids[j//2]
-                result, full_msg_data = mail.fetch(eid, "(RFC822)")
+            BATCH_SIZE = 50
+            for i in range(0, len(email_ids), BATCH_SIZE):
+                batch_ids = email_ids[i:i+BATCH_SIZE]
+                id_str = ','.join(eid.decode() for eid in batch_ids)
+                result, msg_data = mail.fetch(id_str, "(BODY.PEEK[HEADER])")
                 if result != "OK":
                     continue
-                full_msg = email.message_from_bytes(full_msg_data[0][1])
-                body = extract_text_from_email(full_msg)
 
-                status = classify_email(subject, body)
-                if not status:
-                    continue
+                for j in range(0, len(msg_data), 2):
+                    if len(msg_data[j]) < 2:
+                        continue
+                    msg = email.message_from_bytes(msg_data[j][1])
+                    subject = decode_str(msg.get("Subject", ""))
+                    sender = decode_str(msg.get("From", ""))
+                    date_str = msg.get("Date")
+                    date_obj = email.utils.parsedate_to_datetime(date_str)
+                    if date_obj.tzinfo is None:
+                        date_obj = date_obj.replace(tzinfo=timezone.utc)
+                    if date_obj < three_months_ago:
+                        return applications
 
-                company = re.findall(r'@([\w.-]+)', sender)
-                company = company[0].split(".")[0].title() if company else "Unknown"
-                if is_irrelevant_email(subject, sender, company):
-                    continue
+                    eid = batch_ids[j//2]
+                    result, full_msg_data = mail.fetch(eid, "(RFC822)")
+                    if result != "OK":
+                        continue
+                    full_msg = email.message_from_bytes(full_msg_data[0][1])
+                    body = extract_text_from_email(full_msg)
 
-                job_title = subject.split(" at ")[-1] if " at " in subject else subject
-                key = (company, job_title)
+                    status = classify_email(subject, body)
+                    if not status:
+                        continue
 
-                if key not in applications or date_obj > applications[key]["last_update"]:
-                    applications[key] = {
-                        "company": company,
-                        "job_title": job_title.strip(),
-                        "status": status,
-                        "date_applied": date_obj.strftime("%Y-%m-%d"),
-                        "last_update": date_obj,
-                        "subject": subject,
-                    }
+                    company = re.findall(r'@([\w.-]+)', sender)
+                    company = company[0].split(".")[0].title() if company else "Unknown"
+                    if is_irrelevant_email(subject, sender, company):
+                        continue
+
+                    job_title = subject.split(" at ")[-1] if " at " in subject else subject
+                    key = (company, job_title)
+
+                    if key not in applications or date_obj > applications[key]["last_update"]:
+                        applications[key] = {
+                            "company": company,
+                            "job_title": job_title.strip(),
+                            "status": status,
+                            "date_applied": date_obj.strftime("%Y-%m-%d"),
+                            "last_update": date_obj,
+                            "subject": subject,
+                        }
 
     except Exception as e:
         logger.exception("Failed to process emails: %s", e)
