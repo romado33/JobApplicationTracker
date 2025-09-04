@@ -184,9 +184,13 @@ def process_job_emails():
                     subject = decode_str(full_msg.get("Subject", ""))
                     sender = decode_str(full_msg.get("From", ""))
                     date_str = full_msg.get("Date")
-                    date_obj = email.utils.parsedate_to_datetime(date_str)
-                    if date_obj.tzinfo is None:
-                        date_obj = date_obj.replace(tzinfo=timezone.utc)
+                    try:
+                        date_obj = email.utils.parsedate_to_datetime(date_str)
+                        if date_obj.tzinfo is None:
+                            date_obj = date_obj.replace(tzinfo=timezone.utc)
+                    except Exception:
+                        logger.warning("Failed to parse email date '%s'; skipping message", date_str)
+                        continue
                     if date_obj < three_months_ago:
                         stop_processing = True
                         break
