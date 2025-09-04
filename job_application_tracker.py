@@ -9,6 +9,10 @@ import sys
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from email.header import decode_header
+try:
+    from bs4 import BeautifulSoup
+except Exception:  # pragma: no cover - fallback if BeautifulSoup isn't installed
+    BeautifulSoup = None
 
 # ─── Setup Logging ──────────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -80,10 +84,24 @@ def decode_str(s):
 def extract_text_from_email(msg):
     if msg.is_multipart():
         for part in msg.walk():
-            if part.get_content_type() == "text/plain":
+            content_type = part.get_content_type()
+            if content_type == "text/plain":
                 return part.get_payload(decode=True).decode(errors='ignore')
+        for part in msg.walk():
+            if part.get_content_type() == "text/html":
+                html = part.get_payload(decode=True).decode(errors='ignore')
+                if BeautifulSoup:
+                    soup = BeautifulSoup(html, "html.parser")
+                    return soup.get_text()
+                return re.sub(r'<[^>]+>', '', html)
     else:
-        return msg.get_payload(decode=True).decode(errors='ignore')
+        payload = msg.get_payload(decode=True).decode(errors='ignore')
+        if msg.get_content_type() == "text/html":
+            if BeautifulSoup:
+                soup = BeautifulSoup(payload, "html.parser")
+                return soup.get_text()
+            return re.sub(r'<[^>]+>', '', payload)
+        return payload
     return ""
 
 def classify_email(subject, body):
