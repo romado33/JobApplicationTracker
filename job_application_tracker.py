@@ -129,7 +129,29 @@ def process_job_emails():
             if not email_ids:
                 return {}
 
+            # Optional: sort emails by date so we can stop early once we hit older
+            # messages. Newest emails are processed first.
+            try:
+                id_str = ','.join(eid.decode() for eid in email_ids)
+                result, header_data = mail.fetch(id_str, "(BODY.PEEK[HEADER.FIELDS (DATE)])")
+                if result == "OK":
+                    dates = []
+                    for k in range(0, len(header_data), 2):
+                        if len(header_data[k]) < 2:
+                            continue
+                        hdr_msg = email.message_from_bytes(header_data[k][1])
+                        date_header = hdr_msg.get("Date")
+                        date_obj = email.utils.parsedate_to_datetime(date_header)
+                        if date_obj.tzinfo is None:
+                            date_obj = date_obj.replace(tzinfo=timezone.utc)
+                        dates.append(date_obj)
+                    # Pair up dates and ids and sort newest first
+                    email_ids = [eid for _, eid in sorted(zip(dates, email_ids), key=lambda p: p[0], reverse=True)]
+            except Exception:
+                logger.exception("Failed to sort emails by date")
+
             BATCH_SIZE = 50
+            stop_processing = False
             for i in range(0, len(email_ids), BATCH_SIZE):
                 batch_ids = email_ids[i:i+BATCH_SIZE]
                 id_str = ','.join(eid.decode() for eid in batch_ids)
@@ -148,7 +170,8 @@ def process_job_emails():
                     if date_obj.tzinfo is None:
                         date_obj = date_obj.replace(tzinfo=timezone.utc)
                     if date_obj < three_months_ago:
-                        return applications
+                        stop_processing = True
+                        break
 
                     eid = batch_ids[j//2]
                     result, full_msg_data = mail.fetch(eid, "(RFC822)")
@@ -178,6 +201,9 @@ def process_job_emails():
                             "last_update": date_obj,
                             "subject": subject,
                         }
+
+                if stop_processing:
+                    break
 
     except Exception as e:
         logger.exception("Failed to process emails: %s", e)
