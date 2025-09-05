@@ -28,34 +28,45 @@ if not EMAIL_USER or not EMAIL_PASS:
     sys.exit(1)
 
 # ─── Patterns ──────────────────────────────────────────────────────────────
-THANK_YOU_PATTERNS = [
-    re.compile(r'thank you for applying', re.I),
-    re.compile(r'thank you for your application', re.I),
-    re.compile(r'we received your application', re.I),
-    re.compile(r'your application was sent to', re.I),
-    re.compile(r'you applied to', re.I),
-]
-REJECTION_PATTERNS = [
-    re.compile(r'we will not be moving forward', re.I),
-    re.compile(r'we have decided not to proceed', re.I),
-    re.compile(r'we regret to inform you', re.I),
-    re.compile(r'unfortunately', re.I),
-    re.compile(r'we reviewed your application', re.I),
-    re.compile(r'not a good fit', re.I),
-    re.compile(r'better match', re.I),
-    re.compile(r'better fit', re.I),
-    re.compile(r'decided to proceed with a shortlist', re.I),
-    re.compile(r'decided not to proceed', re.I),
-    re.compile(r'regret to inform', re.I),
-    re.compile(r'continue our search', re.I),
-    re.compile(r'moving forward with other candidates', re.I),
-]
-INTERVIEW_PATTERNS = [
-    re.compile(r'(schedule|availability|book|invite).*interview', re.I),
-    re.compile(r'interview.*(scheduled|invite|booking)', re.I),
-    re.compile(r'invitation to interview', re.I),
-    re.compile(r'recruiter.*reach out', re.I),
-]
+# Mapping from status labels to regex patterns that identify the status.
+# Dict order matters: earlier statuses take precedence when classifying.
+STATUS_PATTERNS = {
+    "Interview Requested": [
+        re.compile(r'(schedule|availability|book|invite).*interview', re.I),
+        re.compile(r'interview.*(scheduled|invite|booking)', re.I),
+        re.compile(r'invitation to interview', re.I),
+        re.compile(r'recruiter.*reach out', re.I),
+        re.compile(r'(schedule|set up|arrange).*(call|meeting|interview)', re.I),
+        re.compile(r'(phone|video|onsite).*interview', re.I),
+    ],
+    "Rejected": [
+        re.compile(r'we will not be moving forward', re.I),
+        re.compile(r'we have decided not to proceed', re.I),
+        re.compile(r'we regret to inform you', re.I),
+        re.compile(r'unfortunately', re.I),
+        re.compile(r'we reviewed your application', re.I),
+        re.compile(r'not a good fit', re.I),
+        re.compile(r'better match', re.I),
+        re.compile(r'better fit', re.I),
+        re.compile(r'decided to proceed with a shortlist', re.I),
+        re.compile(r'decided not to proceed', re.I),
+        re.compile(r'regret to inform', re.I),
+        re.compile(r'continue our search', re.I),
+        re.compile(r'moving forward with other candidates', re.I),
+        re.compile(r'not selected', re.I),
+        re.compile(r'cannot move forward', re.I),
+        re.compile(r'passed on your application', re.I),
+    ],
+    "Application Sent": [
+        re.compile(r'thank you for applying', re.I),
+        re.compile(r'thank you for your application', re.I),
+        re.compile(r'we received your application', re.I),
+        re.compile(r'your application was sent to', re.I),
+        re.compile(r'you applied to', re.I),
+        re.compile(r'(application|submission).*(received|submitted)', re.I),
+        re.compile(r'thank you for your (interest|submission)', re.I),
+    ],
+}
 INTERVIEW_FALSE_POSITIVES = [
     re.compile(r'what happens next', re.I),
     re.compile(r"you['’]ll hear from us", re.I),
@@ -107,15 +118,10 @@ def extract_text_from_email(msg):
 def classify_email(subject, body):
     if any(pat.search(subject) or pat.search(body) for pat in INTERVIEW_FALSE_POSITIVES):
         return None
-    for pat in INTERVIEW_PATTERNS:
-        if pat.search(subject) or pat.search(body):
-            return "Interview Requested"
-    for pat in REJECTION_PATTERNS:
-        if pat.search(subject) or pat.search(body):
-            return "Rejected"
-    for pat in THANK_YOU_PATTERNS:
-        if pat.search(subject) or pat.search(body):
-            return "Application Sent"
+    for status, patterns in STATUS_PATTERNS.items():
+        for pat in patterns:
+            if pat.search(subject) or pat.search(body):
+                return status
     return None
 
 def is_irrelevant_email(subject, sender, company):
