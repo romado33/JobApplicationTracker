@@ -1,35 +1,74 @@
-
 import os
 import re
 import csv
 import imaplib
 import email
 import logging
-import sys
 from datetime import datetime, timedelta, timezone
-from dotenv import load_dotenv
+
+# Optional deps
+try:
+    import streamlit as st  # for st.secrets when running in Streamlit
+except Exception:  # not in Streamlit context
+    st = None
+
+try:
+    from dotenv import load_dotenv  # for local CLI runs
+except Exception:
+    load_dotenv = None
+
 from email.header import decode_header
 try:
     from bs4 import BeautifulSoup
 except Exception:  # pragma: no cover - fallback if BeautifulSoup isn't installed
     BeautifulSoup = None
 
-# ─── Setup Logging ──────────────────────────────────────────────────────────────────────
+# ─── Setup Logging ────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# ─── Load .env ──────────────────────────────────────────────────────────────
-load_dotenv()
-EMAIL_USER = os.getenv("EMAIL_USER")
-EMAIL_PASS = os.getenv("EMAIL_PASS")
+# ─── Credentials loader ───────────────────────────────────────────────────────
+def _get_credentials():
+    """
+    Order of precedence:
+      1) Streamlit secrets (when running in Streamlit)
+      2) Environment variables (possibly from .env if present)
+    """
+    user = None
+    pw = None
 
-if not EMAIL_USER or not EMAIL_PASS:
-    logger.error("Missing EMAIL_USER or EMAIL_PASS environment variables")
-    sys.exit(1)
+    # 1) Streamlit secrets (hosted safest path)
+    if st is not None:
+        try:
+            user = st.secrets.get("EMAIL_USER", None)
+            pw = st.secrets.get("EMAIL_PASS", None)
+            if user and pw:
+                # Optional UI hints
+                try:
+                    st.sidebar.success("✅ Gmail credentials loaded from Streamlit secrets")
+                except Exception:
+                    pass
+                return user, pw
+            else:
+                try:
+                    st.sidebar.error("❌ Missing EMAIL_USER or EMAIL_PASS in Streamlit secrets")
+                except Exception:
+                    pass
+        except Exception:
+            # st.secrets not available or misconfigured; fall through to env
+            pass
 
-# ─── Patterns ──────────────────────────────────────────────────────────────
-# Mapping from status labels to regex patterns that identify the status.
-# Dict order matters: earlier statuses take precedence when classifying.
+    # 2) .env / environment variables (local dev & CLI)
+    if load_dotenv is not None:
+        load_dotenv()  # load from .env if present
+
+    user = os.getenv("EMAIL_USER")
+    pw = os.getenv("EMAIL_PASS")
+    return user, pw
+
+EMAIL_USER, EMAIL_PASS = _get_credentials()
+
+# ─── Patterns ────────────────────────────────────────────────────────────────
 STATUS_PATTERNS = {
     "Interview Requested": [
         re.compile(r'(schedule|availability|book|invite).*interview', re.I),
@@ -67,6 +106,7 @@ STATUS_PATTERNS = {
         re.compile(r'thank you for your (interest|submission)', re.I),
     ],
 }
+
 INTERVIEW_FALSE_POSITIVES = [
     re.compile(r'what happens next', re.I),
     re.compile(r"you['’]ll hear from us", re.I),
@@ -86,6 +126,7 @@ EXCLUDED_COMPANIES = {
     "substack", "rallyandtap", "79246730"
 }
 
+# ─── Helpers ─────────────────────────────────────────────────────────────────
 def decode_str(s):
     decoded, encoding = decode_header(s)[0]
     if isinstance(decoded, bytes):
@@ -133,7 +174,12 @@ def is_irrelevant_email(subject, sender, company):
         return True
     return False
 
+# ─── Core logic ──────────────────────────────────────────────────────────────
 def process_job_emails():
+    if not EMAIL_USER or not EMAIL_PASS:
+        logger.error("Missing EMAIL_USER or EMAIL_PASS (Streamlit secrets or env vars).")
+        return {}
+
     applications = {}
     three_months_ago = datetime.now(timezone.utc) - timedelta(days=90)
     try:
@@ -142,7 +188,7 @@ def process_job_emails():
             mail.select('"[Gmail]/All Mail"')
 
             logger.info("📬 Scanning Gmail inbox...")
-            result, data = mail.search(None, 'X-GM-RAW', 'newer_than:90d')
+            result, data = mail.search(None, 'X-GM-RAW', 'newer_than:45d')
 
             if result != "OK":
                 logger.error("IMAP search failed")
@@ -153,8 +199,7 @@ def process_job_emails():
             if not email_ids:
                 return {}
 
-            # Optional: sort emails by date so we can stop early once we hit older
-            # messages. Newest emails are processed first.
+            # Sort newest first (so we can break early once older than 90d)
             try:
                 id_str = ','.join(eid.decode() for eid in email_ids)
                 result, header_data = mail.fetch(id_str, "(BODY.PEEK[HEADER.FIELDS (DATE)])")
@@ -169,7 +214,6 @@ def process_job_emails():
                         if date_obj.tzinfo is None:
                             date_obj = date_obj.replace(tzinfo=timezone.utc)
                         dates.append(date_obj)
-                    # Pair up dates and ids and sort newest first
                     email_ids = [eid for _, eid in sorted(zip(dates, email_ids), key=lambda p: p[0], reverse=True)]
             except Exception:
                 logger.exception("Failed to sort emails by date")
@@ -244,11 +288,19 @@ def save_to_csv(applications, filename="job_applications.csv"):
             ])
     logger.info(f"✅ CSV saved to {filename}")
 
+# ─── CLI entrypoint ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    logger.info("🚀 Starting job application tracker...")
-    applications = process_job_emails()
-    if applications:
-        logger.info(f"🧪 Found {len(applications)} job applications.")
-        save_to_csv(applications)
+    import os
+    if os.getenv("RUN_SCANNER_ON_STARTUP", "0") == "1":
+        logger.info("🚀 Starting job application tracker...")
+        if not EMAIL_USER or not EMAIL_PASS:
+            logger.error("❌ Set EMAIL_USER and EMAIL_PASS via Streamlit secrets or environment variables.")
+        else:
+            applications = process_job_emails()
+            if applications:
+                logger.info(f"🧪 Found {len(applications)} job applications.")
+                save_to_csv(applications)
+            else:
+                logger.info("📭 No job application emails found.")
     else:
-        logger.info("📭 No job application emails found.")
+        logger.info("Startup scan disabled (set RUN_SCANNER_ON_STARTUP=1 to enable).")
