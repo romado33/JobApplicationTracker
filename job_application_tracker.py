@@ -183,12 +183,82 @@ def process_job_emails():
     applications = {}
     three_months_ago = datetime.now(timezone.utc) - timedelta(days=90)
     try:
-        with imaplib.IMAP4_SSL("imap.gmail.com") as mail:
-            mail.login(EMAIL_USER, EMAIL_PASS)
-            mail.select('"[Gmail]/All Mail"')
+        # Enable IMAP debug logging
+        imaplib.Debug = 4  # Maximum debug output
+        
+        imap_server = os.environ.get("IMAP_SERVER", "imap.gmail.com")
+        logger.info(f"Connecting to IMAP server: {imap_server}")
+        logger.info(f"Using email user: {EMAIL_USER}")
+        mailbox = "INBOX"
+        logger.info(f"Selecting mailbox: {mailbox}")
+        
+        with imaplib.IMAP4_SSL(imap_server) as mail:
+            try:
+                login_result = mail.login(EMAIL_USER, EMAIL_PASS)
+                logger.info(f"Login result: {login_result}")
+            except Exception as e:
+                logger.error(f"Login failed: {str(e)}")
+                raise
 
-            logger.info("📬 Scanning Gmail inbox...")
-            result, data = mail.search(None, 'X-GM-RAW', 'newer_than:45d')
+            try:
+                select_result = mail.select(mailbox)
+                logger.info(f"Select mailbox result: {select_result}")
+            except Exception as e:
+                logger.error(f"Select mailbox failed: {str(e)}")
+                raise
+
+            logger.info("📬 Scanning inbox...")
+            
+            # Start with the most basic IMAP command possible to verify the connection works
+            logger.info("Testing basic IMAP search...")
+            try:
+                result, data = mail.search(None, 'ALL')
+                logger.info(f"Basic search result: {result}")
+                logger.info(f"Basic search data: {data}")
+                if result != "OK":
+                    raise Exception(f"Basic IMAP search failed with result: {result}")
+            except Exception as e:
+                logger.error(f"Basic IMAP search failed: {str(e)}")
+                raise
+
+            # If basic search works, try date-based search
+            since_date = (datetime.now() - timedelta(days=45)).strftime('%d-%b-%Y')
+            logger.info(f"Using date: {since_date}")
+            
+            # Convert date to INTERNAL IMAP format (DD-MMM-YYYY)
+            try:
+                parsed_date = datetime.strptime(since_date, '%d-%b-%Y')
+                imap_date = parsed_date.strftime('%d-%b-%Y')  # Ensure proper IMAP date format
+                logger.info(f"IMAP formatted date: {imap_date}")
+            except Exception as e:
+                logger.error(f"Date parsing failed: {str(e)}")
+                raise
+
+            success = False
+            try:
+                # Use the most standard IMAP SINCE syntax
+                search_cmd = f'(SINCE {imap_date})'
+                logger.info(f"Attempting search with: {search_cmd}")
+                result, data = mail.search(None, search_cmd)
+                logger.info(f"Search result: {result}")
+                logger.info(f"Raw server response: {data}")
+                
+                if result == "OK":
+                    success = True
+                else:
+                    raise Exception(f"IMAP SINCE search failed with result: {result}")
+                    
+            except Exception as e:
+                logger.error(f"IMAP SINCE search failed: {str(e)}")
+                # Fall back to basic search if date search fails
+                logger.info("Falling back to basic search...")
+                result, data = mail.search(None, 'ALL')
+                if result == "OK":
+                    success = True
+            
+            if not success:
+                logger.error("All search attempts failed")
+                raise Exception("Could not perform IMAP search with any syntax variation")
 
             if result != "OK":
                 logger.error("IMAP search failed")
@@ -290,6 +360,18 @@ def save_to_csv(applications, filename="job_applications.csv"):
 
 # ─── CLI entrypoint ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    import sys  # added import for sys
+    # Check command-line arguments for '--open-url'
+    if '--open-url' in sys.argv:
+        index = sys.argv.index('--open-url')
+        if len(sys.argv) > index + 1:
+            url = sys.argv[index + 1]
+            logger.info(f"Opening URL: {url}")
+            os.system(f"$BROWSER {url}")
+            sys.exit(0)
+        else:
+            logger.error("No URL provided after '--open-url'")
+            sys.exit(1)
     import os
     if os.getenv("RUN_SCANNER_ON_STARTUP", "0") == "1":
         logger.info("🚀 Starting job application tracker...")
