@@ -71,7 +71,8 @@ def run_scan():
         with imaplib.IMAP4_SSL("imap.gmail.com") as mail:
             mail.login(engine.EMAIL_USER, engine.EMAIL_PASS)
             mail.select(mailbox)
-            result, data = mail.search(None, 'X-GM-RAW', raw_query)
+            safe_query = raw_query.replace("\"", "\\\"")
+            result, data = mail.search(None, 'X-GM-RAW', safe_query)
             if result != "OK":
                 st.error("IMAP search failed.")
                 return {}
